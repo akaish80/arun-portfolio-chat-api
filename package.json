@@ -1,0 +1,12 @@
+{
+  "name": "arun-portfolio-chat-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serverless OpenAI chat API for Arunkumar portfolio",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
