@@ -28,8 +28,46 @@ function getAllowedOrigin(req) {
   return requestOrigin === configured ? configured : ''
 }
 
+function extractReplyText(data) {
+  if (typeof data?.output_text === 'string' && data.output_text.trim()) {
+    return data.output_text.trim()
+  }
+
+  const blocks = Array.isArray(data?.output) ? data.output : []
+  const textParts = []
+
+  blocks.forEach((block) => {
+    const content = Array.isArray(block?.content) ? block.content : []
+    content.forEach((item) => {
+      if (typeof item?.text === 'string' && item.text.trim()) {
+        textParts.push(item.text.trim())
+      }
+    })
+  })
+
+  return textParts.join('\n').trim()
+}
+
+function isDebugEnabled() {
+  return process.env.DEBUG_CHAT_API === '1'
+}
+
+function debugLog(...args) {
+  if (isDebugEnabled()) {
+    console.log('[chat-api]', ...args)
+  }
+}
+
 module.exports = async function handler(req, res) {
+  const requestId = req.headers['x-vercel-id'] || req.headers['x-request-id'] || 'unknown'
   const allowedOrigin = getAllowedOrigin(req)
+
+  debugLog('incoming_request', {
+    requestId,
+    method: req.method,
+    origin: req.headers.origin || '',
+    allowedOrigin: allowedOrigin || 'blocked-or-empty'
+  })
 
   if (allowedOrigin) {
     Object.entries(corsHeaders(allowedOrigin)).forEach(([key, value]) => {
@@ -51,6 +89,7 @@ module.exports = async function handler(req, res) {
 
   try {
     const message = typeof req.body?.message === 'string' ? req.body.message.trim() : ''
+    debugLog('message_received', { requestId, messageLength: message.length })
 
     if (!message) {
       return res.status(400).json({ error: 'message is required.' })
@@ -84,15 +123,37 @@ module.exports = async function handler(req, res) {
     })
 
     const data = await response.json()
+    debugLog('openai_response_meta', {
+      requestId,
+      ok: response.ok,
+      status: response.status,
+      model: data?.model || 'unknown',
+      hasOutputText: typeof data?.output_text === 'string' && data.output_text.trim().length > 0,
+      outputCount: Array.isArray(data?.output) ? data.output.length : 0,
+      errorMessage: data?.error?.message || ''
+    })
 
     if (!response.ok) {
       const upstream = data?.error?.message || 'OpenAI request failed.'
       return res.status(502).json({ error: upstream })
     }
 
-    const reply = data?.output_text || 'I could not generate a response right now.'
+    const reply = extractReplyText(data)
+    debugLog('reply_extracted', {
+      requestId,
+      replyLength: reply.length
+    })
+
+    if (!reply) {
+      return res.status(502).json({ error: 'OpenAI returned an empty response.' })
+    }
+
     return res.status(200).json({ reply })
   } catch (error) {
+    console.error('[chat-api] unhandled_error', {
+      requestId,
+      message: error?.message || 'Unexpected server error.'
+    })
     return res.status(500).json({ error: error?.message || 'Unexpected server error.' })
   }
 }
